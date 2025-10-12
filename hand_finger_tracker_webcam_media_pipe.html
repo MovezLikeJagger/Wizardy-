@@ -1,0 +1,419 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Hand & Finger Tracker (Webcam)</title>
+  <style>
+    :root { --bg:#0b0f14; --fg:#e9eef5; --muted:#94a3b8; --acc:#7c3aed; }
+    * { box-sizing: border-box; }
+    body { margin:0; background:var(--bg); color:var(--fg); font:14px/1.4 system-ui, -apple-system, Segoe UI, Roboto, Inter, Arial, sans-serif; }
+    header { padding:16px 20px; border-bottom:1px solid #1f2937; display:flex; align-items:center; gap:16px; flex-wrap:wrap; }
+    h1 { font-size:16px; margin:0; letter-spacing:.2px; color:#e5e7eb; }
+    .badge { padding:4px 8px; background:#111827; border:1px solid #1f2937; border-radius:999px; color:#cbd5e1; }
+    main { display:grid; grid-template-columns: 1fr 340px; gap:16px; padding:16px; height:calc(100vh - 58px); }
+    #stage { position:relative; border-radius:16px; overflow:hidden; border:1px solid #1f2937; background:#000; }
+    #video { position:absolute; inset:0; width:100%; height:100%; object-fit:cover; transform: scaleX(-1); /* mirror */ }
+    #canvas { position:absolute; inset:0; width:100%; height:100%; pointer-events:none; transform: scaleX(-1); }
+    #sidebar { border:1px solid #1f2937; border-radius:16px; padding:14px; background:#0b1220; display:flex; flex-direction:column; gap:12px; }
+    .row { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+    label { color:#cbd5e1; font-weight:600; font-size:12px; }
+    select, button, input[type="checkbox"] { all:unset; }
+    select, .btn { padding:10px 12px; background:#0f172a; border:1px solid #1f2937; color:#e5e7eb; border-radius:10px; cursor:pointer; }
+    .btn[disabled] { opacity:.5; cursor:not-allowed; }
+    .stats { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+    .stat { padding:10px; background:#0f172a; border:1px solid #1f2937; border-radius:10px; }
+    .stat b { display:block; font-size:18px; margin-bottom:2px; }
+    .muted { color:var(--muted); font-size:12px; }
+    .note { font-size:12px; color:#9ca3af; }
+    footer { position:absolute; right:12px; bottom:12px; background:rgba(10,14,20,.55); border:1px solid #1f2937; backdrop-filter: blur(6px); border-radius:10px; padding:8px 10px; }
+    a { color:#c084fc; text-decoration:none; }
+    details { border:1px solid #1f2937; border-radius:10px; padding:8px 10px; background:#0f172a; }
+    summary { cursor:pointer; color:#cbd5e1; }
+    .tests { font-size:12px; color:#cbd5e1; }
+    .pass { color:#34d399; }
+    .fail { color:#f87171; }
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>🖐️ Hand & Finger Tracker</h1>
+    <span class="badge">MediaPipe HandLandmarker • 2 hands • 21 keypoints</span>
+  </header>
+  <main>
+    <section id="stage">
+      <video id="video" playsinline muted></video>
+      <canvas id="canvas"></canvas>
+      <footer id="hud">Waiting for camera…</footer>
+    </section>
+    <aside id="sidebar">
+      <div class="row">
+        <button id="startBtn" class="btn">Start camera</button>
+        <button id="stopBtn" class="btn" disabled>Stop</button>
+      </div>
+      <div class="row">
+        <label for="cameraSel">Camera</label>
+        <select id="cameraSel"></select>
+      </div>
+      <div class="row">
+        <label class="row" style="gap:6px;cursor:pointer"><input type="checkbox" id="mirrorToggle" checked> Mirror view</label>
+      </div>
+      <div class="row">
+        <label class="row" style="gap:6px;cursor:pointer"><input type="checkbox" id="boxesToggle" checked> Show boxes</label>
+        <label class="row" style="gap:6px;cursor:pointer"><input type="checkbox" id="skeletonToggle" checked> Show skeleton</label>
+        <label class="row" style="gap:6px;cursor:pointer"><input type="checkbox" id="labelsToggle" checked> Show labels</label>
+      </div>
+
+      <div class="stats">
+        <div class="stat"><b id="fps">0</b><span class="muted">FPS</span></div>
+        <div class="stat"><b id="handsCount">0</b><span class="muted">Hands</span></div>
+        <div class="stat" style="grid-column:1 / -1"><b id="gesture">—</b><span class="muted">Gesture (simple heuristics)</span></div>
+      </div>
+
+      <details>
+        <summary>Diagnostics & Tests</summary>
+        <div class="tests">
+          <p>Use these smoke tests if something breaks. Results show here and in the console.</p>
+          <div class="row">
+            <button id="runTests" class="btn">Run tests</button>
+            <button id="clearTests" class="btn">Clear</button>
+          </div>
+          <ul id="testResults"></ul>
+        </div>
+      </details>
+
+      <div class="note">
+        Tip: If the camera doesn’t start from a file URL, run a local server (e.g. <code>python -m http.server</code>) or use a Live Server extension. Works on desktop & most phones.
+      </div>
+    </aside>
+  </main>
+
+  <script type="module">
+    // ✅ FIX: Import all exports instead of a non-existent default export
+    // The previous line `import vision from ...` throws: 
+    // "SyntaxError: Importing binding name 'default' cannot be resolved by star export entries."
+    import * as vision from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@latest/vision_bundle.mjs";
+    const { HandLandmarker, FilesetResolver, DrawingUtils } = vision;
+
+    // --- DOM hooks
+    const video = document.getElementById('video');
+    const canvas = document.getElementById('canvas');
+    const ctx = canvas.getContext('2d');
+    const hud = document.getElementById('hud');
+
+    const startBtn = document.getElementById('startBtn');
+    const stopBtn = document.getElementById('stopBtn');
+    const cameraSel = document.getElementById('cameraSel');
+
+    const fpsEl = document.getElementById('fps');
+    const handsCountEl = document.getElementById('handsCount');
+    const gestureEl = document.getElementById('gesture');
+
+    const mirrorToggle = document.getElementById('mirrorToggle');
+    const boxesToggle = document.getElementById('boxesToggle');
+    const skeletonToggle = document.getElementById('skeletonToggle');
+    const labelsToggle = document.getElementById('labelsToggle');
+
+    const runTestsBtn = document.getElementById('runTests');
+    const clearTestsBtn = document.getElementById('clearTests');
+    const testResultsEl = document.getElementById('testResults');
+
+    // --- State
+    let stream = null;
+    let running = false;
+    let detector = null;
+    let drawingUtils = null;
+    let lastFrameTime = performance.now();
+    let frameCounter = 0;
+    let lastFpsUpdate = performance.now();
+
+    // --- Camera helpers
+    async function listCameras() {
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      const cams = devices.filter(d => d.kind === 'videoinput');
+      cameraSel.innerHTML = '';
+      cams.forEach((d, i) => {
+        const opt = document.createElement('option');
+        opt.value = d.deviceId;
+        opt.textContent = d.label || `Camera ${i+1}`;
+        cameraSel.appendChild(opt);
+      });
+      if (!cams.length) {
+        const opt = document.createElement('option');
+        opt.value = '';
+        opt.textContent = 'No cameras found';
+        cameraSel.appendChild(opt);
+      }
+      return cams;
+    }
+
+    async function startCamera() {
+      try {
+        if (stream) stopCamera();
+        const deviceId = cameraSel.value || undefined;
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: {
+            deviceId: deviceId ? { exact: deviceId } : undefined,
+            width: { ideal: 1280 },
+            height: { ideal: 720 },
+            facingMode: 'user'
+          },
+          audio: false
+        });
+        video.srcObject = stream;
+        await video.play();
+        resizeCanvas();
+        hud.textContent = 'Camera running';
+      } catch (err) {
+        console.error(err);
+        hud.textContent = 'Camera error: ' + err.message;
+      }
+    }
+
+    function stopCamera() {
+      if (stream) {
+        stream.getTracks().forEach(t => t.stop());
+        stream = null;
+      }
+      video.pause();
+      video.srcObject = null;
+      hud.textContent = 'Camera stopped';
+    }
+
+    function resizeCanvas() {
+      const { videoWidth: w, videoHeight: h } = video;
+      if (!w || !h) return;
+      canvas.width = w;
+      canvas.height = h;
+      // Set a stable font for label measurements
+      ctx.font = '12px system-ui, -apple-system, Segoe UI, Roboto, Arial';
+    }
+
+    window.addEventListener('resize', resizeCanvas);
+
+    // --- Hand detector setup (MediaPipe Tasks)
+    async function initDetector() {
+      const files = await FilesetResolver.forVisionTasks(
+        "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@latest/wasm"
+      );
+      detector = await HandLandmarker.createFromOptions(files, {
+        baseOptions: {
+          modelAssetPath:
+            "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task",
+          delegate: 'GPU'
+        },
+        numHands: 2,
+        runningMode: 'VIDEO'
+      });
+      drawingUtils = new DrawingUtils(ctx);
+    }
+
+    // --- Simple gesture heuristics
+    function distance(a, b) {
+      const dx = a.x - b.x, dy = a.y - b.y;
+      return Math.hypot(dx, dy);
+    }
+
+    function fingersUp(landmarks) {
+      // Index, middle, ring, pinky: tip vs pip (y lower = up because y is top->down)
+      const tips = [8,12,16,20];
+      const pips = [6,10,14,18];
+      let count = 0;
+      for (let i=0;i<4;i++) if (landmarks[tips[i]].y < landmarks[pips[i]].y) count++;
+      // Thumb (rough): use distance change as a loose proxy
+      const thumbUp = distance(landmarks[4], landmarks[2]) > 0.06;
+      return count + (thumbUp ? 1 : 0);
+    }
+
+    function gestureFromLandmarks(landmarks) {
+      const pinch = distance(landmarks[4], landmarks[8]);
+      if (pinch < 0.045) return '🤏 Pinch';
+      const f = fingersUp(landmarks);
+      if (f === 0) return '✊ Fist';
+      if (f === 1) return '👍/☝️ One';
+      if (f === 2) return '✌️ Two';
+      if (f === 3) return '👌/Three';
+      if (f === 4) return '🖖/Four';
+      if (f === 5) return '🖐️ Open Palm';
+      return '—';
+    }
+
+    function drawBoxForLandmarks(landmarks) {
+      let minX=1, minY=1, maxX=0, maxY=0;
+      for (const p of landmarks) {
+        if (p.x < minX) minX = p.x; if (p.y < minY) minY = p.y;
+        if (p.x > maxX) maxX = p.x; if (p.y > maxY) maxY = p.y;
+      }
+      const x = minX * canvas.width;
+      const y = minY * canvas.height;
+      const w = (maxX - minX) * canvas.width;
+      const h = (maxY - minY) * canvas.height;
+      ctx.strokeStyle = '#7c3aed';
+      ctx.lineWidth = 2;
+      ctx.strokeRect(x, y, w, h);
+    }
+
+    // --- Main loop
+    async function loop() {
+      if (!running || !detector || video.readyState < 2) {
+        requestAnimationFrame(loop);
+        return;
+      }
+
+      const now = performance.now();
+      const results = detector.detectForVideo(video, now) || {};
+      const hands = Array.isArray(results.landmarks) ? results.landmarks : [];
+
+      // Clear & draw overlays
+      ctx.clearRect(0,0,canvas.width, canvas.height);
+
+      let gestureText = '—';
+      handsCountEl.textContent = String(hands.length);
+
+      hands.forEach((lm, i) => {
+        if (skeletonToggle.checked) {
+          drawingUtils.drawConnectors(lm, HandLandmarker.HAND_CONNECTIONS);
+          drawingUtils.drawLandmarks(lm, { lineWidth: 1, radius: 2 });
+        }
+        if (boxesToggle.checked) drawBoxForLandmarks(lm);
+
+        const g = gestureFromLandmarks(lm);
+        gestureText = hands.length > 1 ? 'Multiple' : g;
+
+        if (labelsToggle.checked) {
+          const handed = results.handednesses?.[i]?.[0]?.categoryName || '';
+          const label = `${handed} ${g}`.trim();
+          // place label near wrist (0)
+          const p = lm[0];
+          ctx.fillStyle = 'rgba(12, 18, 32, .75)';
+          ctx.strokeStyle = '#1f2937';
+          const x = p.x * canvas.width, y = p.y * canvas.height - 12;
+          const textW = ctx.measureText(label).width + 12;
+          ctx.beginPath(); ctx.roundRect(x-4, y-18, textW, 20, 6); ctx.fill(); ctx.stroke();
+          ctx.fillStyle = '#e5e7eb';
+          ctx.fillText(label, x+2, y-3);
+        }
+      });
+
+      // FPS calc
+      frameCounter++;
+      if (now - lastFpsUpdate > 500) {
+        const fps = Math.round((frameCounter * 1000) / (now - lastFpsUpdate));
+        fpsEl.textContent = String(fps);
+        lastFpsUpdate = now;
+        frameCounter = 0;
+      }
+
+      gestureEl.textContent = gestureText;
+      requestAnimationFrame(loop);
+    }
+
+    // --- UI wiring
+    startBtn.addEventListener('click', async () => {
+      startBtn.disabled = true;
+      hud.textContent = 'Initializing model…';
+      try {
+        if (!detector) await initDetector();
+        await listCameras();
+        await startCamera();
+        stopBtn.disabled = false;
+        running = true;
+        requestAnimationFrame(loop);
+      } catch (e) {
+        console.error(e);
+        hud.textContent = 'Init error: ' + e.message;
+        startBtn.disabled = false;
+      }
+    });
+
+    stopBtn.addEventListener('click', () => {
+      running = false;
+      stopCamera();
+      stopBtn.disabled = true;
+      startBtn.disabled = false;
+    });
+
+    cameraSel.addEventListener('change', async () => {
+      if (stream) await startCamera();
+    });
+
+    mirrorToggle.addEventListener('change', () => {
+      const val = mirrorToggle.checked ? 'scaleX(-1)' : 'none';
+      document.getElementById('video').style.transform = val;
+      document.getElementById('canvas').style.transform = val;
+    });
+
+    // polyfill for CanvasRenderingContext2D.roundRect on older browsers
+    if (!CanvasRenderingContext2D.prototype.roundRect) {
+      CanvasRenderingContext2D.prototype.roundRect = function(x,y,w,h,r){
+        if (w<2*r) r=w/2; if (h<2*r) r=h/2;
+        this.beginPath();
+        this.moveTo(x+r,y);
+        this.arcTo(x+w,y,x+w,y+h,r);
+        this.arcTo(x+w,y+h,x,y+h,r);
+        this.arcTo(x,y+h,x,y,r);
+        this.arcTo(x,y,x+w,y,r);
+        this.closePath();
+        return this;
+      }
+    }
+
+    // --- Diagnostics / Tests ---
+    function addResult(ok, msg) {
+      const li = document.createElement('li');
+      li.className = ok ? 'pass' : 'fail';
+      li.textContent = (ok ? '✔ ' : '✖ ') + msg;
+      testResultsEl.appendChild(li);
+      (ok ? console.log : console.error)(msg);
+    }
+
+    async function runTests() {
+      testResultsEl.innerHTML = '';
+
+      // Test 1: Module exports exist
+      try {
+        addResult(typeof HandLandmarker === 'function', 'HandLandmarker export is available');
+        addResult(typeof FilesetResolver === 'object' || typeof FilesetResolver === 'function', 'FilesetResolver export is available');
+        addResult(typeof DrawingUtils === 'function', 'DrawingUtils export is available');
+      } catch (e) {
+        addResult(false, 'Module export check threw: ' + e.message);
+      }
+
+      // Test 2: Initialize detector (WASM + model load)
+      try {
+        if (!detector) {
+          await initDetector();
+        }
+        addResult(!!detector, 'HandLandmarker created');
+        addResult(!!drawingUtils, 'DrawingUtils initialized');
+      } catch (e) {
+        addResult(false, 'Detector init failed: ' + e.message);
+      }
+
+      // Test 3: detectForVideo is callable (smoke test without requiring frames)
+      try {
+        addResult(typeof detector.detectForVideo === 'function', 'detectForVideo function exists');
+      } catch (e) {
+        addResult(false, 'detectForVideo missing: ' + e.message);
+      }
+
+      // Test 4: UI elements present
+      addResult(!!document.getElementById('startBtn'), 'Start button present');
+      addResult(!!document.getElementById('canvas'), 'Canvas present');
+      addResult(!!document.getElementById('video'), 'Video element present');
+    }
+
+    runTestsBtn?.addEventListener('click', runTests);
+    clearTestsBtn?.addEventListener('click', () => testResultsEl.innerHTML = '');
+
+    // Pre-populate camera list on load (requires permission on some browsers)
+    if (navigator.mediaDevices?.enumerateDevices) {
+      listCameras().catch(()=>{});
+    }
+
+    // Expose a tiny testing handle for external scripts or console
+    window.__HANDTRACK_TEST__ = { runTests };
+  </script>
+</body>
+</html>
