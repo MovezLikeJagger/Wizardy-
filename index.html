@@ -65,6 +65,25 @@
         <label class="row" style="gap:6px;cursor:pointer"><input type="checkbox" id="labelsToggle" checked> Show labels</label>
       </div>
 
+      <details>
+        <summary>Advanced thresholds</summary>
+        <div class="row" style="flex-direction:column; align-items:stretch; gap:10px; margin-top:10px;">
+          <label>
+            Detection confidence <span class="muted mono" id="detectionConfVal">0.70</span>
+            <input type="range" id="detectionConf" min="0" max="1" step="0.05" value="0.7">
+          </label>
+          <label>
+            Presence confidence <span class="muted mono" id="presenceConfVal">0.65</span>
+            <input type="range" id="presenceConf" min="0" max="1" step="0.05" value="0.65">
+          </label>
+          <label>
+            Tracking confidence <span class="muted mono" id="trackingConfVal">0.65</span>
+            <input type="range" id="trackingConf" min="0" max="1" step="0.05" value="0.65">
+          </label>
+          <p class="note">Higher thresholds improve accuracy, while lower values can improve speed on slower devices.</p>
+        </div>
+      </details>
+
       <div class="stats">
         <div class="stat"><b id="fps">0</b><span class="muted">FPS</span></div>
         <div class="stat"><b id="handsCount">0</b><span class="muted">Hands</span></div>
@@ -114,6 +133,12 @@
     const boxesToggle = document.getElementById('boxesToggle');
     const skeletonToggle = document.getElementById('skeletonToggle');
     const labelsToggle = document.getElementById('labelsToggle');
+    const detectionConf = document.getElementById('detectionConf');
+    const presenceConf = document.getElementById('presenceConf');
+    const trackingConf = document.getElementById('trackingConf');
+    const detectionConfVal = document.getElementById('detectionConfVal');
+    const presenceConfVal = document.getElementById('presenceConfVal');
+    const trackingConfVal = document.getElementById('trackingConfVal');
 
     const runTestsBtn = document.getElementById('runTests');
     const clearTestsBtn = document.getElementById('clearTests');
@@ -204,9 +229,29 @@
           delegate: 'GPU'
         },
         numHands: 2,
-        runningMode: 'VIDEO'
+        runningMode: 'VIDEO',
+        minHandDetectionConfidence: parseFloat(detectionConf.value),
+        minHandPresenceConfidence: parseFloat(presenceConf.value),
+        minTrackingConfidence: parseFloat(trackingConf.value)
       });
       drawingUtils = new DrawingUtils(ctx);
+    }
+
+    function updateThresholdDisplays() {
+      detectionConfVal.textContent = Number(detectionConf.value).toFixed(2);
+      presenceConfVal.textContent = Number(presenceConf.value).toFixed(2);
+      trackingConfVal.textContent = Number(trackingConf.value).toFixed(2);
+    }
+
+    function applyDetectorThresholds() {
+      updateThresholdDisplays();
+      if (detector) {
+        detector.setOptions({
+          minHandDetectionConfidence: parseFloat(detectionConf.value),
+          minHandPresenceConfidence: parseFloat(presenceConf.value),
+          minTrackingConfidence: parseFloat(trackingConf.value)
+        });
+      }
     }
 
     // --- Simple gesture heuristics
@@ -343,6 +388,12 @@
       document.getElementById('video').style.transform = val;
       document.getElementById('canvas').style.transform = val;
     });
+
+    [detectionConf, presenceConf, trackingConf].forEach(input => {
+      input.addEventListener('input', applyDetectorThresholds);
+    });
+
+    updateThresholdDisplays();
 
     // polyfill for CanvasRenderingContext2D.roundRect on older browsers
     if (!CanvasRenderingContext2D.prototype.roundRect) {
