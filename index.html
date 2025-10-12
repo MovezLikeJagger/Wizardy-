@@ -57,6 +57,10 @@
         <select id="cameraSel"></select>
       </div>
       <div class="row">
+        <label for="modelSel">Model</label>
+        <select id="modelSel"></select>
+      </div>
+      <div class="row">
         <label class="row" style="gap:6px;cursor:pointer"><input type="checkbox" id="mirrorToggle" checked> Mirror view</label>
       </div>
       <div class="row">
@@ -103,7 +107,8 @@
       </details>
 
       <div class="note">
-        Tip: If the camera doesn’t start from a file URL, run a local server (e.g. <code>python -m http.server</code>) or use a Live Server extension. Works on desktop & most phones.
+        Tip: If the camera doesn’t start from a file URL, run a local server (e.g. <code>python -m http.server</code>) or use a Live Server extension. Works on desktop & most phones.<br><br>
+        Model picker: <strong>High accuracy (float32)</strong> offers the most precise landmarks but needs more GPU/CPU and bandwidth. Switch to <strong>Balanced performance (float16)</strong> if you need faster loads or lower memory use at the cost of slight accuracy.
       </div>
     </aside>
   </main>
@@ -129,6 +134,7 @@
     const handsCountEl = document.getElementById('handsCount');
     const gestureEl = document.getElementById('gesture');
 
+    const modelSel = document.getElementById('modelSel');
     const mirrorToggle = document.getElementById('mirrorToggle');
     const boxesToggle = document.getElementById('boxesToggle');
     const skeletonToggle = document.getElementById('skeletonToggle');
@@ -145,6 +151,19 @@
     const testResultsEl = document.getElementById('testResults');
 
     // --- State
+    const MODEL_OPTIONS = {
+      float32: {
+        label: 'High accuracy (float32)',
+        path: 'https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float32/1/hand_landmarker.task',
+        description: 'Best landmark precision, heavier on memory/compute.'
+      },
+      float16: {
+        label: 'Balanced performance (float16)',
+        path: 'https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task',
+        description: 'Smaller model with slightly lower landmark fidelity.'
+      }
+    };
+
     let stream = null;
     let running = false;
     let detector = null;
@@ -152,6 +171,21 @@
     let lastFrameTime = performance.now();
     let frameCounter = 0;
     let lastFpsUpdate = performance.now();
+    let filesetPromise = null;
+
+    function populateModelOptions() {
+      modelSel.innerHTML = '';
+      Object.entries(MODEL_OPTIONS).forEach(([value, meta]) => {
+        const opt = document.createElement('option');
+        opt.value = value;
+        opt.textContent = meta.label;
+        modelSel.appendChild(opt);
+      });
+      modelSel.value = 'float32';
+      modelSel.title = MODEL_OPTIONS[modelSel.value]?.description || '';
+    }
+
+    populateModelOptions();
 
     // --- Camera helpers
     async function listCameras() {
@@ -218,14 +252,21 @@
     window.addEventListener('resize', resizeCanvas);
 
     // --- Hand detector setup (MediaPipe Tasks)
-    async function initDetector() {
-      const files = await FilesetResolver.forVisionTasks(
-        "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@latest/wasm"
-      );
+    async function initDetector(modelKey = modelSel.value) {
+      const selected = MODEL_OPTIONS[modelKey] || MODEL_OPTIONS.float32;
+      if (!filesetPromise) {
+        filesetPromise = FilesetResolver.forVisionTasks(
+          "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@latest/wasm"
+        );
+      }
+      const files = await filesetPromise;
+      if (detector) {
+        detector.close();
+        detector = null;
+      }
       detector = await HandLandmarker.createFromOptions(files, {
         baseOptions: {
-          modelAssetPath:
-            "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task",
+          modelAssetPath: selected.path,
           delegate: 'GPU'
         },
         numHands: 2,
@@ -235,6 +276,7 @@
         minTrackingConfidence: parseFloat(trackingConf.value)
       });
       drawingUtils = new DrawingUtils(ctx);
+      hud.textContent = `Loaded ${selected.label}`;
     }
 
     function updateThresholdDisplays() {
@@ -381,6 +423,18 @@
 
     cameraSel.addEventListener('change', async () => {
       if (stream) await startCamera();
+    });
+
+    modelSel.addEventListener('change', async () => {
+      modelSel.title = MODEL_OPTIONS[modelSel.value]?.description || '';
+      hud.textContent = 'Switching model…';
+      try {
+        await initDetector(modelSel.value);
+        hud.textContent = `Loaded ${MODEL_OPTIONS[modelSel.value]?.label || 'model'}`;
+      } catch (e) {
+        console.error(e);
+        hud.textContent = 'Model load error: ' + e.message;
+      }
     });
 
     mirrorToggle.addEventListener('change', () => {
