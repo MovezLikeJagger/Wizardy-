@@ -51,6 +51,9 @@
     body.mobile .stats { grid-template-columns:repeat(2, minmax(0, 1fr)); }
     body.mobile details { padding:10px 12px; }
     body.mobile summary { font-size:14px; }
+
+    .mobile-model-hint { display:none; }
+    body.mobile .mobile-model-hint { display:block; }
   </style>
 </head>
 <body>
@@ -62,7 +65,7 @@
     <section id="stage">
       <video id="video" playsinline muted></video>
       <canvas id="canvas"></canvas>
-      <footer id="hud">Waiting for camera…</footer>
+      <footer id="hud">Loading model options…</footer>
     </section>
     <aside id="sidebar">
       <div class="row controls">
@@ -77,6 +80,7 @@
         <label for="modelSel">Model</label>
         <select id="modelSel"></select>
       </div>
+      <p class="note mobile-model-hint">We start with <strong>Balanced performance (float16)</strong> on mobile because it’s slightly faster to download and run on slower devices, though precision is reduced. Switch to <strong>High accuracy (float32)</strong> for the cleanest tracking when your hardware can handle it.</p>
       <div class="row">
         <label class="row" style="gap:6px;cursor:pointer"><input type="checkbox" id="mirrorToggle" checked> Mirror view</label>
       </div>
@@ -172,9 +176,12 @@
     const mobileMediaQuery = window.matchMedia('(max-width: 768px)');
     const mobileUserAgent = /Mobi|Android|iPhone|iPad|iPod/i;
 
+    function isMobileEnvironment() {
+      return mobileUserAgent.test(navigator.userAgent || '') || mobileMediaQuery.matches;
+    }
+
     function applyMobileClass() {
-      const isMobile = mobileUserAgent.test(navigator.userAgent || '') || mobileMediaQuery.matches;
-      body.classList.toggle('mobile', isMobile);
+      body.classList.toggle('mobile', isMobileEnvironment());
     }
 
     applyMobileClass();
@@ -217,11 +224,13 @@
         opt.textContent = meta.label;
         modelSel.appendChild(opt);
       });
-      modelSel.value = 'float32';
+      const defaultModel = isMobileEnvironment() ? 'float16' : 'float32';
+      modelSel.value = defaultModel;
       modelSel.title = MODEL_OPTIONS[modelSel.value]?.description || '';
     }
 
     populateModelOptions();
+    hud.textContent = `Loaded ${MODEL_OPTIONS[modelSel.value]?.label || 'model'}${body.classList.contains('mobile') ? ' for quicker loads on mobile.' : '.'}`;
 
     // --- Camera helpers
     async function listCameras() {
