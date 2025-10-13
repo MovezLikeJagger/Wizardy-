@@ -339,19 +339,34 @@
         detector.close();
         detector = null;
       }
-      detector = await HandLandmarker.createFromOptions(files, {
-        baseOptions: {
-          modelAssetPath: selected.path,
-          delegate: 'GPU'
-        },
-        numHands: 2,
-        runningMode: 'VIDEO',
-        minHandDetectionConfidence: parseFloat(detectionConf.value),
-        minHandPresenceConfidence: parseFloat(presenceConf.value),
-        minTrackingConfidence: parseFloat(trackingConf.value)
-      });
-      drawingUtils = new DrawingUtils(ctx);
-      hud.textContent = `Loaded ${selected.label}`;
+
+      const delegates = ['GPU', 'CPU'];
+      let lastError = null;
+      for (const delegate of delegates) {
+        try {
+          detector = await HandLandmarker.createFromOptions(files, {
+            baseOptions: {
+              modelAssetPath: selected.path,
+              delegate
+            },
+            numHands: 2,
+            runningMode: 'VIDEO',
+            minHandDetectionConfidence: parseFloat(detectionConf.value),
+            minHandPresenceConfidence: parseFloat(presenceConf.value),
+            minTrackingConfidence: parseFloat(trackingConf.value)
+          });
+          drawingUtils = new DrawingUtils(ctx);
+          const delegateLabel = delegate === 'CPU' ? ' (CPU fallback)' : '';
+          hud.textContent = `Loaded ${selected.label}${delegateLabel}`;
+          return detector;
+        } catch (err) {
+          console.warn(`HandLandmarker init failed for ${delegate} delegate`, err);
+          lastError = err;
+        }
+      }
+
+      hud.textContent = `Model load error: ${lastError?.message || 'Unknown error'}`;
+      throw lastError;
     }
 
     function updateThresholdDisplays() {
