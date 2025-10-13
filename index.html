@@ -89,6 +89,7 @@
         <label class="row" style="gap:6px;cursor:pointer"><input type="checkbox" id="skeletonToggle" checked> Show skeleton</label>
         <label class="row" style="gap:6px;cursor:pointer"><input type="checkbox" id="labelsToggle" checked> Show labels</label>
         <label class="row" style="gap:6px;cursor:pointer"><input type="checkbox" id="fingerDrawingToggle"> Finger drawing</label>
+        <label class="row" style="gap:6px;cursor:pointer"><input type="checkbox" id="laserToggle"> Laser mode</label>
       </div>
 
       <details>
@@ -164,6 +165,7 @@
     const skeletonToggle = document.getElementById('skeletonToggle');
     const labelsToggle = document.getElementById('labelsToggle');
     const fingerDrawingToggle = document.getElementById('fingerDrawingToggle');
+    const laserToggle = document.getElementById('laserToggle');
     const detectionConf = document.getElementById('detectionConf');
     const presenceConf = document.getElementById('presenceConf');
     const trackingConf = document.getElementById('trackingConf');
@@ -221,6 +223,11 @@
     let filesetPromise = null;
     const fingerDrawings = new Map();
     const FINGER_MOVE_THRESHOLD = 0.01;
+    const LASER_COLORS = {
+      Left: '#38bdf8',
+      Right: '#f472b6'
+    };
+    const LASER_FALLBACK = ['#facc15', '#a855f7', '#f97316'];
 
     function populateModelOptions() {
       modelSel.innerHTML = '';
@@ -472,6 +479,68 @@
       ctx.restore();
     }
 
+    function parseHexColor(hex) {
+      if (typeof hex !== 'string') {
+        return { r: 124, g: 58, b: 237 };
+      }
+      let str = hex.replace('#', '');
+      if (str.length === 3) {
+        str = str.split('').map(ch => ch + ch).join('');
+      }
+      const int = parseInt(str.slice(0, 6), 16);
+      if (Number.isNaN(int)) {
+        return { r: 124, g: 58, b: 237 };
+      }
+      return {
+        r: (int >> 16) & 255,
+        g: (int >> 8) & 255,
+        b: int & 255
+      };
+    }
+
+    function drawLaserBeams(beams) {
+      if (!laserToggle?.checked || !Array.isArray(beams) || beams.length === 0) return;
+      ctx.save();
+      ctx.globalCompositeOperation = 'lighter';
+      ctx.lineCap = 'round';
+      const baseWidth = Math.max(canvas.width, canvas.height);
+      beams.forEach(({ start, end, color }) => {
+        if (!start || !end) return;
+        const sx = start.x * canvas.width;
+        const sy = start.y * canvas.height;
+        const ex = end.x * canvas.width;
+        const ey = end.y * canvas.height;
+        const { r, g, b } = parseHexColor(color);
+        const gradient = ctx.createLinearGradient(sx, sy, ex, ey);
+        gradient.addColorStop(0, `rgba(${r}, ${g}, ${b}, 0)`);
+        gradient.addColorStop(0.25, `rgba(${r}, ${g}, ${b}, 0.25)`);
+        gradient.addColorStop(1, `rgba(${r}, ${g}, ${b}, 0.95)`);
+        ctx.lineWidth = Math.max(2, baseWidth * 0.01);
+        ctx.strokeStyle = gradient;
+        ctx.shadowColor = `rgba(${r}, ${g}, ${b}, 0.7)`;
+        ctx.shadowBlur = Math.max(10, baseWidth * 0.03);
+        ctx.beginPath();
+        ctx.moveTo(sx, sy);
+        ctx.lineTo(ex, ey);
+        ctx.stroke();
+
+        const radius = Math.max(8, baseWidth * 0.02);
+        const tipGlow = ctx.createRadialGradient(ex, ey, 0, ex, ey, radius);
+        tipGlow.addColorStop(0, `rgba(${r}, ${g}, ${b}, 0.95)`);
+        tipGlow.addColorStop(1, `rgba(${r}, ${g}, ${b}, 0)`);
+        ctx.fillStyle = tipGlow;
+        ctx.beginPath();
+        ctx.arc(ex, ey, radius, 0, Math.PI * 2);
+        ctx.fill();
+      });
+      ctx.restore();
+    }
+
+    function getLaserColor(handed, index) {
+      if (handed && LASER_COLORS[handed]) return LASER_COLORS[handed];
+      return LASER_FALLBACK[index % LASER_FALLBACK.length];
+    }
+
     // --- Main loop
     function loop() {
       if (!running) return;
@@ -516,6 +585,21 @@
       ctx.clearRect(0,0,canvas.width, canvas.height);
       renderFingerPaths();
 
+      const laserBeams = [];
+      if (laserToggle?.checked) {
+        hands.forEach((lm, i) => {
+          const info = gesturesInfo[i];
+          if (!info || !info.gesture?.includes('Open Palm')) return;
+          const start = lm?.[0];
+          const end = lm?.[12];
+          if (!start || !end) return;
+          laserBeams.push({
+            start,
+            end,
+            color: getLaserColor(info.handed, i)
+          });
+        });
+      }
       let gestureText = '—';
       if (hands.length === 1) {
         gestureText = gesturesInfo[0]?.gesture || '—';
@@ -548,6 +632,8 @@
           ctx.fillText(label, x+2, y-3);
         }
       });
+
+      drawLaserBeams(laserBeams);
 
       // FPS calc
       frameCounter++;
