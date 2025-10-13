@@ -3,7 +3,7 @@ A real-time hand &amp; finger tracking web app using MediaPipe. Detects up to tw
 
 ## Model precision choices
 
-The app now defaults to the high-accuracy <code>float32</code> MediaPipe Hand Landmarker model, which yields more stable keypoints for fine gestures and small motions. This comes with a modest increase in load time, GPU memory, and compute requirements compared to the lighter <code>float16</code> build. Use the **Model** dropdown in the sidebar to switch between:
+The app now defaults to the high-accuracy <code>float32</code> MediaPipe Hand Landmarker model, which yields more stable keypoints for fine gestures and small motions. This comes with a modest increase in load time, GPU memory, and compute requirements compared to the lighter <code>float16</code> build. If your browser cannot create the GPU delegate needed by float32, the app now falls back to a CPU delegate automatically so the model still loads (albeit with a slight performance hit). Use the **Model** dropdown in the sidebar to switch between:
 
 - **High accuracy (float32)** — Best fidelity and recommended when you want the cleanest tracking.
 - **Balanced performance (float16)** — Slightly faster to download and run on slower devices but with reduced precision.
