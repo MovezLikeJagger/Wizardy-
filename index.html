@@ -88,6 +88,7 @@
         <label class="row" style="gap:6px;cursor:pointer"><input type="checkbox" id="boxesToggle" checked> Show boxes</label>
         <label class="row" style="gap:6px;cursor:pointer"><input type="checkbox" id="skeletonToggle" checked> Show skeleton</label>
         <label class="row" style="gap:6px;cursor:pointer"><input type="checkbox" id="labelsToggle" checked> Show labels</label>
+        <label class="row" style="gap:6px;cursor:pointer"><input type="checkbox" id="fingerDrawingToggle"> Finger drawing</label>
       </div>
 
       <details>
@@ -122,6 +123,7 @@
           <div class="row controls">
             <button id="runTests" class="btn">Run tests</button>
             <button id="clearTests" class="btn">Clear</button>
+            <button id="clearDrawings" class="btn">Clear drawings</button>
           </div>
           <ul id="testResults"></ul>
         </div>
@@ -161,6 +163,7 @@
     const boxesToggle = document.getElementById('boxesToggle');
     const skeletonToggle = document.getElementById('skeletonToggle');
     const labelsToggle = document.getElementById('labelsToggle');
+    const fingerDrawingToggle = document.getElementById('fingerDrawingToggle');
     const detectionConf = document.getElementById('detectionConf');
     const presenceConf = document.getElementById('presenceConf');
     const trackingConf = document.getElementById('trackingConf');
@@ -170,6 +173,7 @@
 
     const runTestsBtn = document.getElementById('runTests');
     const clearTestsBtn = document.getElementById('clearTests');
+    const clearDrawingsBtn = document.getElementById('clearDrawings');
     const testResultsEl = document.getElementById('testResults');
 
     // --- Responsive detection
@@ -215,6 +219,8 @@
     let frameCounter = 0;
     let lastFpsUpdate = performance.now();
     let filesetPromise = null;
+    const fingerDrawings = new Map();
+    const FINGER_MOVE_THRESHOLD = 0.01;
 
     function populateModelOptions() {
       modelSel.innerHTML = '';
@@ -294,6 +300,7 @@
       video.pause();
       video.srcObject = null;
       hud.textContent = 'Camera stopped';
+      resetFingerDrawings();
       ctx.clearRect(0, 0, canvas.width, canvas.height);
       fpsEl.textContent = '0';
       handsCountEl.textContent = '0';
@@ -402,6 +409,69 @@
       ctx.strokeRect(x, y, w, h);
     }
 
+    function ensureFingerBuffer(handed) {
+      if (!fingerDrawings.has(handed)) {
+        fingerDrawings.set(handed, { strokes: [], activeStroke: null, lastPoint: null });
+      }
+      return fingerDrawings.get(handed);
+    }
+
+    function deactivateFingerStroke(buffer) {
+      if (!buffer) return;
+      buffer.activeStroke = null;
+      buffer.lastPoint = null;
+    }
+
+    function resetFingerDrawings() {
+      fingerDrawings.clear();
+    }
+
+    function addFingerPoint(buffer, point) {
+      if (!buffer) return;
+      if (!buffer.activeStroke) {
+        buffer.activeStroke = [point];
+        buffer.strokes.push(buffer.activeStroke);
+        buffer.lastPoint = point;
+        return;
+      }
+      const last = buffer.lastPoint;
+      if (!last || Math.hypot(point.x - last.x, point.y - last.y) >= FINGER_MOVE_THRESHOLD) {
+        buffer.activeStroke.push(point);
+        buffer.lastPoint = point;
+      }
+    }
+
+    function renderFingerPaths() {
+      if (!fingerDrawingToggle?.checked || !fingerDrawings.size) return;
+      ctx.save();
+      ctx.lineJoin = 'round';
+      ctx.lineCap = 'round';
+      ctx.lineWidth = 4;
+      ctx.strokeStyle = 'rgba(124, 58, 237, 0.85)';
+      ctx.fillStyle = ctx.strokeStyle;
+      fingerDrawings.forEach(buffer => {
+        buffer.strokes.forEach(stroke => {
+          if (!Array.isArray(stroke) || stroke.length === 0) return;
+          if (stroke.length === 1) {
+            const p = stroke[0];
+            ctx.beginPath();
+            ctx.arc(p.x * canvas.width, p.y * canvas.height, 3, 0, Math.PI * 2);
+            ctx.fill();
+            return;
+          }
+          ctx.beginPath();
+          stroke.forEach((pt, idx) => {
+            const x = pt.x * canvas.width;
+            const y = pt.y * canvas.height;
+            if (idx === 0) ctx.moveTo(x, y);
+            else ctx.lineTo(x, y);
+          });
+          ctx.stroke();
+        });
+      });
+      ctx.restore();
+    }
+
     // --- Main loop
     function loop() {
       if (!running) return;
@@ -414,10 +484,44 @@
       const results = detector.detectForVideo(video, now) || {};
       const hands = Array.isArray(results.landmarks) ? results.landmarks : [];
 
+      const seenHands = new Set();
+      const gesturesInfo = hands.map((lm, i) => {
+        const handed = results.handednesses?.[i]?.[0]?.categoryName || `Hand ${i + 1}`;
+        seenHands.add(handed);
+        const gestureLabel = gestureFromLandmarks(lm);
+        if (fingerDrawingToggle?.checked) {
+          const shouldDraw = gestureLabel.includes('Open Palm') || gestureLabel.includes('Pinch');
+          const buffer = ensureFingerBuffer(handed);
+          if (shouldDraw) {
+            const tip = lm[8];
+            if (tip) {
+              addFingerPoint(buffer, { x: tip.x, y: tip.y });
+            }
+          } else {
+            deactivateFingerStroke(buffer);
+          }
+        }
+        return { gesture: gestureLabel, handed };
+      });
+
+      if (fingerDrawingToggle?.checked) {
+        fingerDrawings.forEach((buffer, handed) => {
+          if (!seenHands.has(handed)) {
+            deactivateFingerStroke(buffer);
+          }
+        });
+      }
+
       // Clear & draw overlays
       ctx.clearRect(0,0,canvas.width, canvas.height);
+      renderFingerPaths();
 
       let gestureText = '—';
+      if (hands.length === 1) {
+        gestureText = gesturesInfo[0]?.gesture || '—';
+      } else if (hands.length > 1) {
+        gestureText = 'Multiple';
+      }
       handsCountEl.textContent = String(hands.length);
 
       hands.forEach((lm, i) => {
@@ -427,11 +531,11 @@
         }
         if (boxesToggle.checked) drawBoxForLandmarks(lm);
 
-        const g = gestureFromLandmarks(lm);
-        gestureText = hands.length > 1 ? 'Multiple' : g;
+        const info = gesturesInfo[i] || {};
+        const g = info.gesture || gestureFromLandmarks(lm);
 
         if (labelsToggle.checked) {
-          const handed = results.handednesses?.[i]?.[0]?.categoryName || '';
+          const handed = info.handed || results.handednesses?.[i]?.[0]?.categoryName || '';
           const label = `${handed} ${g}`.trim();
           // place label near wrist (0)
           const p = lm[0];
@@ -505,6 +609,13 @@
       document.getElementById('canvas').style.transform = val;
     });
 
+    fingerDrawingToggle?.addEventListener('change', () => {
+      if (!fingerDrawingToggle.checked) {
+        resetFingerDrawings();
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+      }
+    });
+
     [detectionConf, presenceConf, trackingConf].forEach(input => {
       input.addEventListener('input', applyDetectorThresholds);
     });
@@ -573,6 +684,10 @@
 
     runTestsBtn?.addEventListener('click', runTests);
     clearTestsBtn?.addEventListener('click', () => testResultsEl.innerHTML = '');
+    clearDrawingsBtn?.addEventListener('click', () => {
+      resetFingerDrawings();
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+    });
 
     // Pre-populate camera list on load (requires permission on some browsers)
     if (navigator.mediaDevices?.enumerateDevices) {
