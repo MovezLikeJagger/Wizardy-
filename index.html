@@ -17,6 +17,7 @@
     #canvas { position:absolute; inset:0; width:100%; height:100%; pointer-events:none; transform: scaleX(-1); }
     #sidebar { border:1px solid #1f2937; border-radius:16px; padding:14px; background:#0b1220; display:flex; flex-direction:column; gap:12px; }
     .row { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+    .controls { gap:12px; }
     label { color:#cbd5e1; font-weight:600; font-size:12px; }
     select, button, input[type="checkbox"] { all:unset; }
     select, .btn { padding:10px 12px; background:#0f172a; border:1px solid #1f2937; color:#e5e7eb; border-radius:10px; cursor:pointer; }
@@ -34,6 +35,22 @@
     .pass { color:#34d399; }
     .fail { color:#f87171; }
     .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
+
+    body.mobile { font-size:15px; }
+    body.mobile header { padding:12px 16px; flex-direction:column; align-items:flex-start; gap:8px; }
+    body.mobile main { grid-template-columns:1fr; grid-template-rows:auto auto; height:auto; padding:12px; gap:12px; }
+    body.mobile #stage { min-height:55vh; }
+    body.mobile #sidebar { order:2; padding:12px; gap:12px; }
+    body.mobile #sidebar .controls { flex-direction:column; align-items:stretch; }
+    body.mobile #sidebar .controls .btn { width:100%; text-align:center; }
+    body.mobile #sidebar .field { flex-direction:column; align-items:stretch; }
+    body.mobile #sidebar .field select { width:100%; }
+    body.mobile select, body.mobile .btn { padding:12px 14px; font-size:15px; }
+    body.mobile label { font-size:13px; }
+    body.mobile footer#hud { left:12px; right:12px; bottom:12px; text-align:center; }
+    body.mobile .stats { grid-template-columns:repeat(2, minmax(0, 1fr)); }
+    body.mobile details { padding:10px 12px; }
+    body.mobile summary { font-size:14px; }
   </style>
 </head>
 <body>
@@ -48,22 +65,22 @@
       <footer id="hud">Waiting for camera…</footer>
     </section>
     <aside id="sidebar">
-      <div class="row">
+      <div class="row controls">
         <button id="startBtn" class="btn">Start camera</button>
         <button id="stopBtn" class="btn" disabled>Stop</button>
       </div>
-      <div class="row">
+      <div class="row field">
         <label for="cameraSel">Camera</label>
         <select id="cameraSel"></select>
       </div>
-      <div class="row">
+      <div class="row field">
         <label for="modelSel">Model</label>
         <select id="modelSel"></select>
       </div>
       <div class="row">
         <label class="row" style="gap:6px;cursor:pointer"><input type="checkbox" id="mirrorToggle" checked> Mirror view</label>
       </div>
-      <div class="row">
+      <div class="row toggles">
         <label class="row" style="gap:6px;cursor:pointer"><input type="checkbox" id="boxesToggle" checked> Show boxes</label>
         <label class="row" style="gap:6px;cursor:pointer"><input type="checkbox" id="skeletonToggle" checked> Show skeleton</label>
         <label class="row" style="gap:6px;cursor:pointer"><input type="checkbox" id="labelsToggle" checked> Show labels</label>
@@ -98,7 +115,7 @@
         <summary>Diagnostics & Tests</summary>
         <div class="tests">
           <p>Use these smoke tests if something breaks. Results show here and in the console.</p>
-          <div class="row">
+          <div class="row controls">
             <button id="runTests" class="btn">Run tests</button>
             <button id="clearTests" class="btn">Clear</button>
           </div>
@@ -121,6 +138,7 @@
     const { HandLandmarker, FilesetResolver, DrawingUtils } = vision;
 
     // --- DOM hooks
+    const body = document.body;
     const video = document.getElementById('video');
     const canvas = document.getElementById('canvas');
     const ctx = canvas.getContext('2d');
@@ -149,6 +167,24 @@
     const runTestsBtn = document.getElementById('runTests');
     const clearTestsBtn = document.getElementById('clearTests');
     const testResultsEl = document.getElementById('testResults');
+
+    // --- Responsive detection
+    const mobileMediaQuery = window.matchMedia('(max-width: 768px)');
+    const mobileUserAgent = /Mobi|Android|iPhone|iPad|iPod/i;
+
+    function applyMobileClass() {
+      const isMobile = mobileUserAgent.test(navigator.userAgent || '') || mobileMediaQuery.matches;
+      body.classList.toggle('mobile', isMobile);
+    }
+
+    applyMobileClass();
+    if (typeof mobileMediaQuery.addEventListener === 'function') {
+      mobileMediaQuery.addEventListener('change', applyMobileClass);
+    } else if (typeof mobileMediaQuery.addListener === 'function') {
+      mobileMediaQuery.addListener(applyMobileClass);
+    }
+    window.addEventListener('resize', applyMobileClass);
+    window.addEventListener('orientationchange', applyMobileClass);
 
     // --- State
     const MODEL_OPTIONS = {
