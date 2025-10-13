@@ -243,17 +243,28 @@
       return cams;
     }
 
+    function getVideoConstraints(deviceId) {
+      const resolution = body.classList.contains('mobile')
+        ? { width: { ideal: 640 }, height: { ideal: 480 } }
+        : { width: { ideal: 1280 }, height: { ideal: 720 } };
+
+      const facingMode = (!body.classList.contains('mobile') || mirrorToggle.checked)
+        ? 'user'
+        : { ideal: 'environment' };
+
+      return {
+        ...(deviceId ? { deviceId: { exact: deviceId } } : {}),
+        ...resolution,
+        facingMode
+      };
+    }
+
     async function startCamera() {
       try {
         if (stream) stopCamera();
         const deviceId = cameraSel.value || undefined;
         stream = await navigator.mediaDevices.getUserMedia({
-          video: {
-            deviceId: deviceId ? { exact: deviceId } : undefined,
-            width: { ideal: 1280 },
-            height: { ideal: 720 },
-            facingMode: 'user'
-          },
+          video: getVideoConstraints(deviceId),
           audio: false
         });
         video.srcObject = stream;
