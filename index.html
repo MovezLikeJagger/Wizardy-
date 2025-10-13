@@ -217,7 +217,6 @@
     let running = false;
     let detector = null;
     let drawingUtils = null;
-    let lastFrameTime = performance.now();
     let frameCounter = 0;
     let lastFpsUpdate = performance.now();
     let filesetPromise = null;
@@ -228,6 +227,11 @@
       Right: '#f472b6'
     };
     const LASER_FALLBACK = ['#facc15', '#a855f7', '#f97316'];
+
+    function resetFpsCounters() {
+      frameCounter = 0;
+      lastFpsUpdate = performance.now();
+    }
 
     function populateModelOptions() {
       modelSel.innerHTML = '';
@@ -281,27 +285,66 @@
       };
     }
 
+    function stopMediaStream(mediaStream) {
+      if (!mediaStream) return;
+      mediaStream.getTracks().forEach(track => track.stop());
+    }
+
     async function startCamera() {
+      const previousStream = stream;
+      let newStream = null;
       try {
-        if (stream) stopCamera();
         const deviceId = cameraSel.value || undefined;
-        stream = await navigator.mediaDevices.getUserMedia({
+        newStream = await navigator.mediaDevices.getUserMedia({
           video: getVideoConstraints(deviceId),
           audio: false
         });
-        video.srcObject = stream;
+
+        video.srcObject = newStream;
+        stream = newStream;
         await video.play();
         resizeCanvas();
+        resetFingerDrawings();
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        resetFpsCounters();
+
+        const activeDeviceId = stream?.getVideoTracks?.()?.[0]?.getSettings?.()?.deviceId || deviceId || '';
+        try {
+          const cams = await listCameras();
+          if (activeDeviceId && Array.isArray(cams) && cams.some(cam => cam.deviceId === activeDeviceId)) {
+            cameraSel.value = activeDeviceId;
+          }
+        } catch (listErr) {
+          console.warn('Unable to refresh camera list after starting stream', listErr);
+        }
+
         hud.textContent = 'Camera running';
+
+        if (previousStream && previousStream !== stream) {
+          stopMediaStream(previousStream);
+        }
       } catch (err) {
-        console.error(err);
-        hud.textContent = 'Camera error: ' + err.message;
+        if (newStream) {
+          stopMediaStream(newStream);
+        }
+
+        stream = previousStream;
+        if (previousStream) {
+          video.srcObject = previousStream;
+          await video.play().catch(() => {});
+        } else {
+          video.pause();
+          video.srcObject = null;
+        }
+
+        hud.textContent = 'Camera error: ' + (err?.message || 'Unknown error');
+        throw err;
       }
     }
 
     function stopCamera() {
       if (stream) {
-        stream.getTracks().forEach(t => t.stop());
+        stopMediaStream(stream);
         stream = null;
       }
       video.pause();
@@ -309,6 +352,7 @@
       hud.textContent = 'Camera stopped';
       resetFingerDrawings();
       ctx.clearRect(0, 0, canvas.width, canvas.height);
+      resetFpsCounters();
       fpsEl.textContent = '0';
       handsCountEl.textContent = '0';
       gestureEl.textContent = '—';
@@ -565,7 +609,15 @@
       }
 
       const now = performance.now();
-      const results = detector.detectForVideo(video, now) || {};
+      let results = {};
+      try {
+        results = detector.detectForVideo(video, now) || {};
+      } catch (err) {
+        console.error('Hand detection error', err);
+        hud.textContent = 'Detection error: ' + (err?.message || 'Unknown error');
+        if (running) requestAnimationFrame(loop);
+        return;
+      }
       const hands = Array.isArray(results.landmarks) ? results.landmarks : [];
 
       const seenHands = new Set();
@@ -669,14 +721,15 @@
       hud.textContent = 'Initializing model…';
       try {
         if (!detector) await initDetector();
-        await listCameras();
         await startCamera();
         stopBtn.disabled = false;
         running = true;
         requestAnimationFrame(loop);
       } catch (e) {
         console.error(e);
-        hud.textContent = 'Init error: ' + e.message;
+        hud.textContent = 'Init error: ' + (e?.message || 'Unknown error');
+        running = false;
+        stopBtn.disabled = true;
         startBtn.disabled = false;
       }
     });
@@ -689,7 +742,22 @@
     });
 
     cameraSel.addEventListener('change', async () => {
-      if (stream) await startCamera();
+      if (!stream) return;
+      const previousDeviceId = stream?.getVideoTracks?.()?.[0]?.getSettings?.()?.deviceId || '';
+      try {
+        await startCamera();
+      } catch (e) {
+        console.error(e);
+        if (previousDeviceId) {
+          const option = Array.from(cameraSel.options).find(opt => opt.value === previousDeviceId);
+          if (option) {
+            cameraSel.value = previousDeviceId;
+          }
+        }
+        if (previousDeviceId) {
+          hud.textContent += ' Restored previous camera.';
+        }
+      }
     });
 
     modelSel.addEventListener('change', async () => {
