@@ -718,17 +718,46 @@
     // --- UI wiring
     startBtn.addEventListener('click', async () => {
       startBtn.disabled = true;
-      hud.textContent = 'Initializing model…';
+      stopBtn.disabled = true;
+      hud.textContent = 'Starting camera…';
       try {
-        if (!detector) await initDetector();
         await startCamera();
+
+        hud.textContent = 'Initializing model…';
+        const selectedModel = modelSel.value;
+        let fallbackNotice = '';
+        try {
+          await initDetector(selectedModel);
+        } catch (primaryErr) {
+          console.error('Primary model init failed', primaryErr);
+          if (selectedModel !== 'float16') {
+            const reason = primaryErr?.message || 'Unknown error';
+            modelSel.value = 'float16';
+            await initDetector('float16');
+            fallbackNotice = `Model "${selectedModel}" failed (${reason}). Switched to float16.`;
+          } else {
+            throw primaryErr;
+          }
+        }
+
+        if (fallbackNotice) {
+          hud.textContent = fallbackNotice;
+        }
+
         stopBtn.disabled = false;
         running = true;
         requestAnimationFrame(loop);
       } catch (e) {
         console.error(e);
-        hud.textContent = 'Init error: ' + (e?.message || 'Unknown error');
+        const errorMsg = 'Init error: ' + (e?.message || 'Unknown error');
+        hud.textContent = errorMsg;
         running = false;
+        if (detector) {
+          detector.close();
+          detector = null;
+        }
+        stopCamera();
+        hud.textContent = errorMsg;
         stopBtn.disabled = true;
         startBtn.disabled = false;
       }
@@ -736,6 +765,10 @@
 
     stopBtn.addEventListener('click', () => {
       running = false;
+      if (detector) {
+        detector.close();
+        detector = null;
+      }
       stopCamera();
       stopBtn.disabled = true;
       startBtn.disabled = false;
