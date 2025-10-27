@@ -80,7 +80,7 @@
         <label for="modelSel">Model</label>
         <select id="modelSel"></select>
       </div>
-      <p class="note mobile-model-hint">We start with <strong>Balanced performance (float16)</strong> on mobile because it’s slightly faster to download and run on slower devices, though precision is reduced. Switch to <strong>High accuracy (float32)</strong> for the cleanest tracking when your hardware can handle it.</p>
+      <p class="note mobile-model-hint">We run <strong>Balanced performance (float16)</strong> everywhere because it downloads quickly and stays smooth on mobile hardware while keeping reliable tracking.</p>
       <div class="row">
         <label class="row" style="gap:6px;cursor:pointer"><input type="checkbox" id="mirrorToggle" checked> Mirror view</label>
       </div>
@@ -132,7 +132,7 @@
 
       <div class="note">
         Tip: If the camera doesn’t start from a file URL, run a local server (e.g. <code>python -m http.server</code>) or use a Live Server extension. Works on desktop & most phones.<br><br>
-        Model picker: <strong>High accuracy (float32)</strong> offers the most precise landmarks but needs more GPU/CPU and bandwidth. Switch to <strong>Balanced performance (float16)</strong> if you need faster loads or lower memory use at the cost of slight accuracy.
+        Model picker: <strong>Balanced performance (float16)</strong> is the recommended and only option. It keeps downloads light, works across GPUs/CPUs, and still delivers responsive landmark tracking without the heavier float32 build.
       </div>
     </aside>
   </main>
@@ -201,15 +201,10 @@
 
     // --- State
     const MODEL_OPTIONS = {
-      float32: {
-        label: 'High accuracy (float32)',
-        path: 'https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float32/1/hand_landmarker.task',
-        description: 'Best landmark precision, heavier on memory/compute.'
-      },
       float16: {
         label: 'Balanced performance (float16)',
         path: 'https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task',
-        description: 'Smaller model with slightly lower landmark fidelity.'
+        description: 'Smaller model tuned for broad device compatibility.'
       }
     };
 
@@ -241,7 +236,7 @@
         opt.textContent = meta.label;
         modelSel.appendChild(opt);
       });
-      const defaultModel = isMobileEnvironment() ? 'float16' : 'float32';
+      const defaultModel = 'float16';
       modelSel.value = defaultModel;
       modelSel.title = MODEL_OPTIONS[modelSel.value]?.description || '';
     }
@@ -372,7 +367,7 @@
 
     // --- Hand detector setup (MediaPipe Tasks)
     async function initDetector(modelKey = modelSel.value) {
-      const selected = MODEL_OPTIONS[modelKey] || MODEL_OPTIONS.float32;
+      const selected = MODEL_OPTIONS[modelKey] || MODEL_OPTIONS.float16;
       if (!filesetPromise) {
         filesetPromise = FilesetResolver.forVisionTasks(
           "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@latest/wasm"
@@ -725,24 +720,7 @@
 
         hud.textContent = 'Initializing model…';
         const selectedModel = modelSel.value;
-        let fallbackNotice = '';
-        try {
-          await initDetector(selectedModel);
-        } catch (primaryErr) {
-          console.error('Primary model init failed', primaryErr);
-          if (selectedModel !== 'float16') {
-            const reason = primaryErr?.message || 'Unknown error';
-            modelSel.value = 'float16';
-            await initDetector('float16');
-            fallbackNotice = `Model "${selectedModel}" failed (${reason}). Switched to float16.`;
-          } else {
-            throw primaryErr;
-          }
-        }
-
-        if (fallbackNotice) {
-          hud.textContent = fallbackNotice;
-        }
+        await initDetector(selectedModel);
 
         stopBtn.disabled = false;
         running = true;
