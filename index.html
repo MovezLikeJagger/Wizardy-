@@ -15,12 +15,27 @@
     #stage { position:relative; border-radius:16px; overflow:hidden; border:1px solid #1f2937; background:#000; }
     #video { position:absolute; inset:0; width:100%; height:100%; object-fit:cover; transform: scaleX(-1); /* mirror */ }
     #canvas { position:absolute; inset:0; width:100%; height:100%; pointer-events:none; transform: scaleX(-1); }
-    #sidebar { border:1px solid #1f2937; border-radius:16px; padding:14px; background:#0b1220; display:flex; flex-direction:column; gap:12px; }
+    #sidebar { border:1px solid #1f2937; border-radius:16px; padding:14px; background:#0b1220; display:flex; flex-direction:column; gap:14px; }
     .row { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+    .row.field { flex-direction:column; align-items:flex-start; gap:8px; width:100%; }
+    .row.field select { width:100%; }
     .controls { gap:12px; }
+    .settings-group { padding:12px; border:1px solid #1f2937; border-radius:12px; background:#0d1628; display:flex; flex-direction:column; gap:12px; }
+    .settings-group-title { font-size:12px; text-transform:uppercase; letter-spacing:0.08em; color:#64748b; margin:0; }
+    .settings-group .settings-group-title { margin-bottom:0; }
+    .toggle-grid { display:grid; grid-template-columns:repeat(2, minmax(0, 1fr)); gap:8px; }
+    .toggle-grid label { background:#0f172a; border:1px solid #1f2937; border-radius:10px; padding:10px 12px; display:flex; align-items:center; gap:8px; cursor:pointer; width:100%; }
+    .toggle-grid input[type="checkbox"], .inline-toggle input[type="checkbox"] { flex-shrink:0; }
+    .inline-toggle { display:flex; align-items:center; gap:6px; cursor:pointer; padding:10px 12px; background:#0f172a; border:1px solid #1f2937; border-radius:10px; width:100%; }
     label { color:#cbd5e1; font-weight:600; font-size:12px; }
     select, button, input[type="checkbox"] { all:unset; }
+    input[type="checkbox"] { width:18px; height:18px; border-radius:6px; border:1px solid #334155; background:#111827; display:grid; place-items:center; transition:border-color .2s ease, background .2s ease; }
+    input[type="checkbox"]::after { content:''; width:10px; height:10px; border-radius:3px; background:transparent; transition:background .2s ease; }
+    input[type="checkbox"]:checked { border-color:#7c3aed; background:rgba(124, 58, 237, 0.2); }
+    input[type="checkbox"]:checked::after { background:#c4b5fd; }
     select, .btn { padding:10px 12px; background:#0f172a; border:1px solid #1f2937; color:#e5e7eb; border-radius:10px; cursor:pointer; }
+    select { display:block; width:100%; min-height:40px; }
+    .btn { display:flex; align-items:center; justify-content:center; font-weight:600; min-height:40px; }
     .btn[disabled] { opacity:.5; cursor:not-allowed; }
     .stats { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
     .stat { padding:10px; background:#0f172a; border:1px solid #1f2937; border-radius:10px; }
@@ -41,11 +56,16 @@
     body.mobile main { grid-template-columns:1fr; grid-template-rows:auto auto; height:auto; padding:12px; gap:12px; }
     body.mobile #stage { min-height:55vh; }
     body.mobile #sidebar { order:2; padding:12px; gap:12px; }
-    body.mobile #sidebar .controls { flex-direction:column; align-items:stretch; }
+    body.mobile #sidebar .settings-group { padding:10px 12px; gap:10px; }
+    body.mobile #sidebar .settings-group-title { font-size:11px; }
+    body.mobile #sidebar .controls { display:grid; grid-template-columns:repeat(auto-fit, minmax(120px, 1fr)); gap:8px; }
     body.mobile #sidebar .controls .btn { width:100%; text-align:center; }
     body.mobile #sidebar .field { flex-direction:column; align-items:stretch; }
     body.mobile #sidebar .field select { width:100%; }
     body.mobile select, body.mobile .btn { padding:12px 14px; font-size:15px; }
+    body.mobile .inline-toggle { padding:12px 14px; }
+    body.mobile .toggle-grid { grid-template-columns:repeat(auto-fit, minmax(140px, 1fr)); }
+    body.mobile .toggle-grid label { padding:12px 14px; }
     body.mobile label { font-size:13px; }
     body.mobile footer#hud { left:12px; right:12px; bottom:max(12px, env(safe-area-inset-bottom)); text-align:center; padding-bottom:calc(8px + max(0px, env(safe-area-inset-bottom) - 12px)); }
     body.mobile .stats { grid-template-columns:repeat(2, minmax(0, 1fr)); }
@@ -68,29 +88,38 @@
       <footer id="hud">Loading model options…</footer>
     </section>
     <aside id="sidebar">
-      <div class="row controls">
-        <button id="startBtn" class="btn">Start camera</button>
-        <button id="stopBtn" class="btn" disabled>Stop</button>
-      </div>
-      <div class="row field">
-        <label for="cameraSel">Camera</label>
-        <select id="cameraSel"></select>
-      </div>
-      <div class="row field">
-        <label for="modelSel">Model</label>
-        <select id="modelSel"></select>
-      </div>
-      <p class="note mobile-model-hint">We run <strong>Balanced performance (float16)</strong> everywhere because it downloads quickly and stays smooth on mobile hardware while keeping reliable tracking.</p>
-      <div class="row">
-        <label class="row" style="gap:6px;cursor:pointer"><input type="checkbox" id="mirrorToggle" checked> Mirror view</label>
-      </div>
-      <div class="row toggles">
-        <label class="row" style="gap:6px;cursor:pointer"><input type="checkbox" id="boxesToggle" checked> Show boxes</label>
-        <label class="row" style="gap:6px;cursor:pointer"><input type="checkbox" id="skeletonToggle" checked> Show skeleton</label>
-        <label class="row" style="gap:6px;cursor:pointer"><input type="checkbox" id="labelsToggle" checked> Show labels</label>
-        <label class="row" style="gap:6px;cursor:pointer"><input type="checkbox" id="fingerDrawingToggle"> Finger drawing</label>
-        <label class="row" style="gap:6px;cursor:pointer"><input type="checkbox" id="laserToggle"> Laser mode</label>
-      </div>
+      <section class="settings-group" aria-labelledby="session-settings">
+        <h2 id="session-settings" class="settings-group-title">Session</h2>
+        <div class="row controls">
+          <button id="startBtn" class="btn">Start camera</button>
+          <button id="stopBtn" class="btn" disabled>Stop</button>
+        </div>
+        <div class="row field">
+          <label for="cameraSel">Camera</label>
+          <select id="cameraSel"></select>
+        </div>
+      </section>
+
+      <section class="settings-group" aria-labelledby="model-settings">
+        <h2 id="model-settings" class="settings-group-title">Model</h2>
+        <div class="row field">
+          <label for="modelSel">Model</label>
+          <select id="modelSel"></select>
+        </div>
+        <p class="note mobile-model-hint">We run <strong>Balanced performance (float16)</strong> everywhere because it downloads quickly and stays smooth on mobile hardware while keeping reliable tracking.</p>
+      </section>
+
+      <section class="settings-group" aria-labelledby="display-settings">
+        <h2 id="display-settings" class="settings-group-title">Display</h2>
+        <label class="inline-toggle"><input type="checkbox" id="mirrorToggle" checked> Mirror view</label>
+        <div class="toggle-grid">
+          <label><input type="checkbox" id="boxesToggle" checked> Show boxes</label>
+          <label><input type="checkbox" id="skeletonToggle" checked> Show skeleton</label>
+          <label><input type="checkbox" id="labelsToggle" checked> Show labels</label>
+          <label><input type="checkbox" id="fingerDrawingToggle"> Finger drawing</label>
+          <label><input type="checkbox" id="laserToggle"> Laser mode</label>
+        </div>
+      </section>
 
       <details>
         <summary>Advanced thresholds</summary>
