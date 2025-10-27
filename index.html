@@ -403,6 +403,7 @@
     }
 
     function shouldUseUpscale(modelKey) {
+      if (document.body.classList.contains('mobile')) return false;
       if (!UPSCALE_CONFIG.enabled) return false;
       if (modelKey !== 'float16') return false;
       if (!offscreenCtx) return false;
