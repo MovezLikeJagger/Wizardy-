@@ -149,6 +149,12 @@
     const video = document.getElementById('video');
     const canvas = document.getElementById('canvas');
     const ctx = canvas.getContext('2d');
+    const offscreenCanvas = document.createElement('canvas');
+    const offscreenCtx = offscreenCanvas.getContext('2d');
+    if (offscreenCtx) {
+      offscreenCtx.imageSmoothingEnabled = true;
+      offscreenCtx.imageSmoothingQuality = 'high';
+    }
     const hud = document.getElementById('hud');
 
     const startBtn = document.getElementById('startBtn');
@@ -200,11 +206,34 @@
     window.addEventListener('orientationchange', applyMobileClass);
 
     // --- State
+    const DEFAULT_UPSCALE_CONFIG = {
+      enabled: true,
+      targetWidth: 1280
+    };
+
+    const USER_UPSCALE_CONFIG = (() => {
+      if (typeof window === 'undefined') return null;
+      const globalConfig = window.HandLandmarkerUpscaleConfig;
+      if (typeof globalConfig === 'number') {
+        return { enabled: true, targetWidth: globalConfig };
+      }
+      if (typeof globalConfig === 'boolean') {
+        return { enabled: globalConfig };
+      }
+      if (globalConfig && typeof globalConfig === 'object') {
+        return globalConfig;
+      }
+      return null;
+    })();
+
+    const UPSCALE_CONFIG = { ...DEFAULT_UPSCALE_CONFIG, ...(USER_UPSCALE_CONFIG || {}) };
+
     const MODEL_OPTIONS = {
       float16: {
         label: 'Balanced performance (float16)',
         path: 'https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task',
-        description: 'Smaller model tuned for broad device compatibility.'
+        description: 'Smaller model tuned for broad device compatibility.',
+        upscaleTargetWidth: 1280
       }
     };
 
@@ -366,6 +395,24 @@
     window.addEventListener('resize', resizeCanvas);
 
     // --- Hand detector setup (MediaPipe Tasks)
+    let currentModelKey = modelSel.value;
+
+    function getUpscaleTargetWidth(modelKey) {
+      const meta = MODEL_OPTIONS[modelKey] || {};
+      return typeof meta.upscaleTargetWidth === 'number' ? meta.upscaleTargetWidth : UPSCALE_CONFIG.targetWidth;
+    }
+
+    function shouldUseUpscale(modelKey) {
+      if (!UPSCALE_CONFIG.enabled) return false;
+      if (modelKey !== 'float16') return false;
+      if (!offscreenCtx) return false;
+      const width = video?.videoWidth || 0;
+      const height = video?.videoHeight || 0;
+      const targetWidth = getUpscaleTargetWidth(modelKey);
+      if (!width || !height || !targetWidth) return false;
+      return width < targetWidth;
+    }
+
     async function initDetector(modelKey = modelSel.value) {
       const selected = MODEL_OPTIONS[modelKey] || MODEL_OPTIONS.float16;
       if (!filesetPromise) {
@@ -397,6 +444,7 @@
           drawingUtils = new DrawingUtils(ctx);
           const delegateLabel = delegate === 'CPU' ? ' (CPU fallback)' : '';
           hud.textContent = `Loaded ${selected.label}${delegateLabel}`;
+          currentModelKey = modelKey;
           return detector;
         } catch (err) {
           console.warn(`HandLandmarker init failed for ${delegate} delegate`, err);
@@ -605,8 +653,30 @@
 
       const now = performance.now();
       let results = {};
+      const useUpscale = shouldUseUpscale(currentModelKey);
+      let detectionSource = video;
+      if (useUpscale) {
+        const sourceWidth = video.videoWidth;
+        const sourceHeight = video.videoHeight;
+        const targetWidth = getUpscaleTargetWidth(currentModelKey);
+        if (sourceWidth && sourceHeight && targetWidth) {
+          const desiredWidth = Math.round(targetWidth);
+          const scale = desiredWidth / sourceWidth;
+          const targetHeight = Math.round(sourceHeight * scale);
+          if (offscreenCanvas.width !== desiredWidth || offscreenCanvas.height !== targetHeight) {
+            offscreenCanvas.width = desiredWidth;
+            offscreenCanvas.height = targetHeight;
+            offscreenCtx.imageSmoothingEnabled = true;
+            offscreenCtx.imageSmoothingQuality = 'high';
+          }
+          offscreenCtx.clearRect(0, 0, offscreenCanvas.width, offscreenCanvas.height);
+          offscreenCtx.drawImage(video, 0, 0, offscreenCanvas.width, offscreenCanvas.height);
+          detectionSource = offscreenCanvas;
+        }
+      }
+
       try {
-        results = detector.detectForVideo(video, now) || {};
+        results = detector.detectForVideo(detectionSource, now) || {};
       } catch (err) {
         console.error('Hand detection error', err);
         hud.textContent = 'Detection error: ' + (err?.message || 'Unknown error');
